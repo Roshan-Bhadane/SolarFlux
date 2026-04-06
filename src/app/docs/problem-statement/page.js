@@ -26,7 +26,7 @@ export default function ProblemStatement() {
             Understanding Coronal Mass Ejections (CMEs)
           </h1>
           <p className="text-xl text-gray-300 max-w-3xl mx-auto">
-            Learn about the impact of CMEs on Earth's technology and infrastructure
+            Learn about the impact of CMEs on Earth&apos;s technology and infrastructure
           </p>
         </div>
 
@@ -139,7 +139,7 @@ export default function ProblemStatement() {
             <div>
               <h3 className="text-xl font-semibold mb-3 text-orange-400">How We Monitor CMEs</h3>
               <ul className="space-y-3 text-gray-300">
-                <li>• Real-time data from Aditya-L1's ASPEX & SUIT instruments</li>
+                <li>• Real-time data from Aditya-L1&apos;s ASPEX & SUIT instruments</li>
                 <li>• Ground-based solar observatories</li>
                 <li>• Space weather monitoring satellites</li>
                 <li>• Magnetometer networks around the globe</li>

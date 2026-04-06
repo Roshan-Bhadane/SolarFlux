@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   Activity,
@@ -24,10 +24,69 @@ import CMETable from "@/components/CMETable";
 import AlertCard from "@/components/AlertCard";
 import AdityaL1Monitor from "@/components/AdityaL1Monitor";
 import NasaApiStatus from "@/components/NasaApiStatus";
-// LiveAlertSystem and ISROIntegration imports removed
 import { adityaL1Simulator } from "@/lib/aditya-l1/simulator";
+import { detectAnomalies } from "@/lib/cme/placeholders";
 
-// Client-side only component to prevent hydration issues
+function mapSwpcRowToSolarChart(row) {
+  const ts =
+    row.timestamp instanceof Date
+      ? row.timestamp.getTime()
+      : new Date(row.timestamp).getTime();
+  return {
+    timestamp: ts,
+    windSpeed: row.speed,
+    density: row.density,
+    temperature: row.temperature,
+    magneticField: row.bt,
+  };
+}
+
+function mapSwpcRowToMag(row) {
+  const ts =
+    row.timestamp instanceof Date
+      ? row.timestamp.getTime()
+      : new Date(row.timestamp).getTime();
+  return {
+    timestamp: ts,
+    bx: row.bx,
+    by: row.by,
+    bz: row.bz,
+    totalField: row.bt,
+  };
+}
+
+function buildAlertsFromWindSeries(solarWindSeries) {
+  const aspex = solarWindSeries.map((p) => ({
+    timestamp: p.timestamp,
+    windSpeed: p.windSpeed,
+    particleFlux: (p.density || 0) * 80,
+  }));
+  const { anomalies } = detectAnomalies(aspex);
+  return anomalies.map((a, i) => ({
+    id: `sw-${i}-${a.timestamp}`,
+    title: a.reason || "Solar wind anomaly",
+    description: `Wind ${
+      a.windSpeed != null ? Math.round(a.windSpeed) : "—"
+    } km/s · density-based flux proxy ${
+      a.particleFlux != null ? Math.round(a.particleFlux) : "—"
+    }`,
+    severity:
+      a.isRuleBased || (a.score || 0) >= 4
+        ? "high"
+        : (a.score || 0) >= 2
+          ? "medium"
+          : "low",
+    type: "CME",
+    timestamp:
+      typeof a.timestamp === "number"
+        ? a.timestamp
+        : new Date(a.timestamp).getTime(),
+    source: "NOAA SWPC (ACE/DSCOVR)",
+    speed:
+      a.windSpeed != null ? `${Math.round(a.windSpeed)} km/s` : undefined,
+  }));
+}
+
 function ClientOnly({ children }) {
   const [hasMounted, setHasMounted] = useState(false);
 
@@ -54,213 +113,202 @@ export default function Dashboard() {
   const [cmeEvents, setCmeEvents] = useState([]);
   const [cmeLoading, setCmeLoading] = useState(false);
   const [cmeError, setCmeError] = useState(null);
-  const [isSimulating, setIsSimulating] = useState(true);
+  const [isSimulating, setIsSimulating] = useState(false);
   const [isClient, setIsClient] = useState(false);
   const [telegramStatus, setTelegramStatus] = useState(null);
+  const [usingSimulatedDashboard, setUsingSimulatedDashboard] = useState(false);
+  const [dataSourceMode, setDataSourceMode] = useState(null);
 
   useEffect(() => {
     setIsClient(true);
   }, []);
 
   useEffect(() => {
-    // Initialize simulator data
-    const initializeData = async () => {
-      const status = adityaL1Simulator.getSystemStatus();
-      const historical = adityaL1Simulator.getHistoricalData();
-
-      // Ensure magnetometer data is included in historical data
-      if (!historical.magnetometer) {
-        historical.magnetometer = [];
-      }
-
-      // Generate initial magnetometer data if empty
-      if (historical.magnetometer.length === 0) {
-        const now = Date.now();
-        for (let i = 24; i >= 0; i--) {
-          const timestamp = now - i * 60 * 60 * 1000;
-          historical.magnetometer.push(
-            adityaL1Simulator.generateMagnetometerData(timestamp)
-          );
-        }
-      }
-
-      // Initialize with simulator data first to ensure we have something to display
-      console.log(
-        "Initializing with simulator data:",
-        adityaL1Simulator.cmeEvents
-      );
-      setCmeEvents(adityaL1Simulator.cmeEvents);
-
-      // Force immediate display of simulator data
-      setTimeout(() => {
-        if (!cmeEvents || cmeEvents.length === 0) {
-          console.log("Forcing simulator data display");
-          setCmeEvents(adityaL1Simulator.cmeEvents);
-        }
-      }, 100);
-
-      // Test Telegram connection on initialization
-      testTelegramConnection();
-
-      // Fetch real CME data from NASA DONKI API
-      setCmeLoading(true);
-      setCmeError(null);
-      try {
-        // Try multiple API endpoints for better reliability
-        const endpoints = [
-          "/api/test-cme",
-          "/api/cme",
-          "/api/cactus",
-          "/api/noaa",
-        ];
-        let successfulData = null;
-
-        for (const endpoint of endpoints) {
-          try {
-            console.log(`Trying endpoint: ${endpoint}`);
-            const response = await fetch(endpoint, {
-              method: "GET",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              // Add timeout to prevent hanging requests
-              signal: AbortSignal.timeout(10000), // 10 second timeout
-            });
-
-            if (response.ok) {
-              const data = await response.json();
-              console.log(`API response from ${endpoint}:`, data);
-
-              // Check if we have valid CME events data
-              if (
-                data.events &&
-                Array.isArray(data.events) &&
-                data.events.length > 0
-              ) {
-                console.log(
-                  `Setting CME events from ${endpoint}:`,
-                  data.events
-                );
-                setCmeEvents(data.events);
-                successfulData = data;
-                if (data.isFallback) {
-                  setCmeError(
-                    `Using fallback data from ${endpoint}: ${
-                      data.note || "API unavailable"
-                    }`
-                  );
-                }
-                break; // Use the first successful endpoint
-              } else if (
-                data.data &&
-                Array.isArray(data.data) &&
-                data.data.length > 0
-              ) {
-                console.log(
-                  `Setting CME events from ${endpoint} (data field):`,
-                  data.data
-                );
-                setCmeEvents(data.data);
-                successfulData = data;
-                if (data.fallback) {
-                  setCmeError(
-                    `Using fallback data from ${endpoint}: ${
-                      data.note || "API unavailable"
-                    }`
-                  );
-                }
-                break; // Use the first successful endpoint
-              }
-            }
-          } catch (endpointError) {
-            console.warn(`Endpoint ${endpoint} failed:`, endpointError.message);
-            continue; // Try next endpoint
-          }
-        }
-
-        // If no endpoints worked, use simulator data
-        if (!successfulData) {
-          console.log("All API endpoints failed, using simulator data");
-          setCmeEvents(adityaL1Simulator.cmeEvents);
-          setCmeError("All API endpoints unavailable, using simulator data");
-        }
-      } catch (error) {
-        console.error("Error fetching CME data:", error);
-        // Fallback to simulator data if API call throws an error
-        console.log(
-          "Error fetching data, using simulator data:",
-          adityaL1Simulator.cmeEvents
-        );
-        setCmeEvents(adityaL1Simulator.cmeEvents);
-        setCmeError(`Error: ${error.message}`);
-      } finally {
-        setCmeLoading(false);
-      }
-
-      // Ensure we have at least the simulator data if API fails or returns empty
-      setTimeout(() => {
-        setCmeEvents((prevEvents) => {
-          if (!prevEvents || prevEvents.length === 0) {
-            console.log("No events found, using simulator data as fallback");
-            return adityaL1Simulator.cmeEvents;
-          }
-          return prevEvents;
-        });
-      }, 1000);
-
-      setSystemStatus(status);
-      setLiveData(historical);
-    };
-
-    initializeData();
-
-    // Start real-time simulation
-    const simulationInterval = setInterval(() => {
-      if (isSimulating) {
-        const update = adityaL1Simulator.generateRealTimeUpdate();
-        setLiveData((prev) => ({
-          ...prev,
-          solarWind: [...(prev?.solarWind || []), update.solarWind],
-          particleFlux: [...(prev?.particleFlux || []), update.particleFlux],
-          magnetometer: [...(prev?.magnetometer || []), update.magnetometer],
-        }));
-        setAnomalies(update.anomalies);
-      }
-    }, 10000); // Update every 10 seconds
-
-    // Simulate CME detection every 30 seconds
-    const cmeInterval = setInterval(() => {
-      if (isSimulating && Math.random() < 0.3) {
-        // 30% chance
-        const newCME = adityaL1Simulator.simulateCMEDetection();
-        setCmeEvents((prev) => [newCME, ...prev]);
-      }
-    }, 30000);
-
-    // Update current time every second
     const timeInterval = setInterval(() => {
       setCurrentTime(new Date());
     }, 1000);
+    return () => clearInterval(timeInterval);
+  }, []);
 
-    return () => {
-      clearInterval(simulationInterval);
-      clearInterval(cmeInterval);
-      clearInterval(timeInterval);
-    };
-  }, [isSimulating]);
-
-  // Test Telegram connection
   const testTelegramConnection = async () => {
     try {
       const response = await fetch("/api/telegram-test");
       const result = await response.json();
       setTelegramStatus(result.success ? "connected" : "disconnected");
-      console.log("Telegram status:", result);
     } catch (error) {
       console.error("Telegram test failed:", error);
       setTelegramStatus("error");
     }
   };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function initializeData() {
+      setCmeLoading(true);
+      setCmeError(null);
+
+      try {
+        const [cmeRes, noaaRes, windRes] = await Promise.all([
+          fetch("/api/cme", { signal: AbortSignal.timeout(25000) }),
+          fetch("/api/noaa", { signal: AbortSignal.timeout(15000) }),
+          fetch("/api/solar-wind?source=ace", {
+            signal: AbortSignal.timeout(15000),
+          }),
+        ]);
+
+        let cmePayload = null;
+        let noaaPayload = null;
+        let windPayload = null;
+        try {
+          cmePayload = await cmeRes.json();
+        } catch {
+          /* ignore */
+        }
+        try {
+          noaaPayload = await noaaRes.json();
+        } catch {
+          /* ignore */
+        }
+        try {
+          windPayload = await windRes.json();
+        } catch {
+          /* ignore */
+        }
+
+        const cmeOk =
+          cmeRes.ok && cmePayload && cmePayload.isFallback !== true;
+        const noaaOk =
+          noaaRes.ok && noaaPayload && noaaPayload.source === "NOAA_SWPC";
+        const windOk =
+          windRes.ok &&
+          windPayload &&
+          windPayload.isFallback !== true &&
+          Array.isArray(windPayload.data) &&
+          windPayload.data.length > 0;
+
+        const allLive = cmeOk && noaaOk && windOk;
+
+        if (cancelled) return;
+
+        if (allLive) {
+          const rows = windPayload.data;
+          const solarWind = rows.map(mapSwpcRowToSolarChart);
+          const magnetometer = rows.map(mapSwpcRowToMag);
+          setLiveData({
+            solarWind,
+            magnetometer,
+            particleFlux: [],
+          });
+          setCmeEvents(
+            Array.isArray(cmePayload.events) ? cmePayload.events : []
+          );
+          setAnomalies(buildAlertsFromWindSeries(solarWind));
+          setCmeError(null);
+          setUsingSimulatedDashboard(false);
+          setDataSourceMode("live");
+          setIsSimulating(false);
+          setSystemStatus({
+            ...adityaL1Simulator.getSystemStatus(),
+            dataLatency: "~1–5 min (NOAA SWPC)",
+          });
+        } else {
+          const status = adityaL1Simulator.getSystemStatus();
+          const historical = adityaL1Simulator.getHistoricalData();
+
+          if (!historical.magnetometer) {
+            historical.magnetometer = [];
+          }
+          if (historical.magnetometer.length === 0) {
+            const now = Date.now();
+            for (let i = 24; i >= 0; i--) {
+              const timestamp = now - i * 60 * 60 * 1000;
+              historical.magnetometer.push(
+                adityaL1Simulator.generateMagnetometerData(timestamp)
+              );
+            }
+          }
+
+          setSystemStatus(status);
+          setLiveData(historical);
+          const sw0 = historical.solarWind || [];
+          setAnomalies(buildAlertsFromWindSeries(sw0));
+          setCmeEvents(adityaL1Simulator.cmeEvents);
+          setCmeError(
+            "Using simulated data — NASA CME, NOAA, or solar wind feed did not all load successfully."
+          );
+          setUsingSimulatedDashboard(true);
+          setDataSourceMode("simulated");
+          setIsSimulating(true);
+        }
+
+        testTelegramConnection();
+      } catch (error) {
+        console.error("Dashboard data load error:", error);
+        if (cancelled) return;
+
+        const status = adityaL1Simulator.getSystemStatus();
+        const historical = adityaL1Simulator.getHistoricalData();
+        if (!historical.magnetometer) historical.magnetometer = [];
+        if (historical.magnetometer.length === 0) {
+          const now = Date.now();
+          for (let i = 24; i >= 0; i--) {
+            const timestamp = now - i * 60 * 60 * 1000;
+            historical.magnetometer.push(
+              adityaL1Simulator.generateMagnetometerData(timestamp)
+            );
+          }
+        }
+        setSystemStatus(status);
+        setLiveData(historical);
+        setAnomalies(
+          buildAlertsFromWindSeries(historical.solarWind || [])
+        );
+        setCmeEvents(adityaL1Simulator.cmeEvents);
+        setCmeError(
+          `Using simulated data — ${error.message || "network error"}`
+        );
+        setUsingSimulatedDashboard(true);
+        setDataSourceMode("simulated");
+        setIsSimulating(true);
+        testTelegramConnection();
+      } finally {
+        if (!cancelled) setCmeLoading(false);
+      }
+    }
+
+    initializeData();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!usingSimulatedDashboard || !isSimulating) return undefined;
+
+    const simulationInterval = setInterval(() => {
+      const update = adityaL1Simulator.generateRealTimeUpdate();
+      setLiveData((prev) => ({
+        ...prev,
+        solarWind: [...(prev?.solarWind || []), update.solarWind],
+        particleFlux: [...(prev?.particleFlux || []), update.particleFlux],
+        magnetometer: [...(prev?.magnetometer || []), update.magnetometer],
+      }));
+      setAnomalies(update.anomalies);
+    }, 10000);
+
+    const cmeInterval = setInterval(() => {
+      if (Math.random() < 0.3) {
+        const newCME = adityaL1Simulator.simulateCMEDetection();
+        setCmeEvents((prev) => [newCME, ...prev]);
+      }
+    }, 30000);
+
+    return () => {
+      clearInterval(simulationInterval);
+      clearInterval(cmeInterval);
+    };
+  }, [isSimulating, usingSimulatedDashboard]);
 
   const toggleSimulation = () => {
     setIsSimulating(!isSimulating);
@@ -279,28 +327,42 @@ export default function Dashboard() {
     }
   };
 
-  // Format time consistently to avoid hydration issues
   const formatTime = (date) => {
     if (!isClient) return "--:--:--";
-    // Use a fixed format that doesn't depend on locale settings
     const hours = date.getHours().toString().padStart(2, "0");
     const minutes = date.getMinutes().toString().padStart(2, "0");
     const seconds = date.getSeconds().toString().padStart(2, "0");
     return `${hours}:${minutes}:${seconds}`;
   };
 
+  const chartWind = liveData?.solarWind || [];
+  const chartMag = liveData?.magnetometer || [];
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-      {/* Header */}
       <div className="bg-gradient-to-r from-slate-800/50 to-slate-700/50 backdrop-blur-md border-b border-slate-600/30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <Link href="/" className="inline-flex items-center text-sm text-gray-400 hover:text-white mb-4 transition-colors">
-            <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+          <Link
+            href="/"
+            className="inline-flex items-center text-sm text-gray-400 hover:text-white mb-4 transition-colors"
+          >
+            <svg
+              className="w-4 h-4 mr-1"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M10 19l-7-7m0 0l7-7m-7 7h18"
+              />
             </svg>
             Back to Home
           </Link>
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-center space-x-4">
               <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center">
                 <Satellite className="w-6 h-6 text-white" />
@@ -314,7 +376,23 @@ export default function Dashboard() {
                 </p>
               </div>
             </div>
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center flex-wrap gap-3 justify-end">
+              <span
+                className={`text-xs font-medium px-2.5 py-1 rounded-md border ${
+                  dataSourceMode === null
+                    ? "text-slate-400 border-slate-500/40 bg-slate-500/10"
+                    : dataSourceMode === "live"
+                      ? "text-green-300 border-green-500/40 bg-green-500/10"
+                      : "text-amber-200 border-amber-500/40 bg-amber-500/10"
+                }`}
+                title="Data source for charts and CME table"
+              >
+                {dataSourceMode === null
+                  ? "…"
+                  : dataSourceMode === "live"
+                    ? "🟢 Live Data"
+                    : "🟡 Simulated"}
+              </span>
               <div className="flex items-center space-x-2">
                 <div
                   className={`w-3 h-3 rounded-full ${
@@ -322,15 +400,22 @@ export default function Dashboard() {
                   } animate-pulse`}
                 ></div>
                 <span className="text-sm text-slate-300">
-                  {isSimulating ? "SIMULATION ACTIVE" : "SIMULATION PAUSED"}
+                  {usingSimulatedDashboard
+                    ? isSimulating
+                      ? "SIMULATION ACTIVE"
+                      : "SIMULATION PAUSED"
+                    : "LIVE FEEDS"}
                 </span>
               </div>
               <button
                 onClick={toggleSimulation}
+                disabled={!usingSimulatedDashboard}
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  isSimulating
-                    ? "bg-red-500 hover:bg-red-600 text-white"
-                    : "bg-green-500 hover:bg-green-600 text-white"
+                  !usingSimulatedDashboard
+                    ? "bg-slate-600 text-slate-400 cursor-not-allowed"
+                    : isSimulating
+                      ? "bg-red-500 hover:bg-red-600 text-white"
+                      : "bg-green-500 hover:bg-green-600 text-white"
                 }`}
               >
                 {isSimulating ? "Pause" : "Start"} Simulation
@@ -341,16 +426,16 @@ export default function Dashboard() {
                   telegramStatus === "connected"
                     ? "bg-green-500 hover:bg-green-600 text-white"
                     : telegramStatus === "error"
-                    ? "bg-red-500 hover:bg-red-600 text-white"
-                    : "bg-blue-500 hover:bg-blue-600 text-white"
+                      ? "bg-red-500 hover:bg-red-600 text-white"
+                      : "bg-blue-500 hover:bg-blue-600 text-white"
                 }`}
                 title="Test Telegram Integration"
               >
                 {telegramStatus === "connected"
                   ? "✓"
                   : telegramStatus === "error"
-                  ? "✗"
-                  : "📱"}{" "}
+                    ? "✗"
+                    : "📱"}{" "}
                 Telegram
               </button>
               <div className="text-sm text-slate-400">
@@ -361,8 +446,15 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {usingSimulatedDashboard && (
+        <div className="bg-amber-500/15 border-b border-amber-500/30 px-4 py-2 text-center text-sm text-amber-100">
+          Using simulated data — live NASA CME, NOAA, and solar wind feeds did
+          not all load. Check <code className="text-amber-200">.env.local</code>{" "}
+          and network, then refresh.
+        </div>
+      )}
+
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Solar Activity & CME Map */}
         <div className="mb-8">
           <div className="flex items-center space-x-3 mb-6">
             <div className="w-8 h-8 bg-gradient-to-r from-yellow-500 to-orange-600 rounded-lg flex items-center justify-center">
@@ -374,7 +466,6 @@ export default function Dashboard() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-            {/* Solar Activity Chart */}
             <div className="lg:col-span-2">
               <div className="bg-gradient-to-br from-slate-800/40 to-slate-900/40 backdrop-blur-md border border-slate-600/30 rounded-xl p-6 shadow-xl">
                 <div className="flex items-center space-x-3 mb-4">
@@ -383,32 +474,33 @@ export default function Dashboard() {
                     Solar Activity
                   </h3>
                 </div>
-                <SolarChart data={liveData?.solarWind || []} />
+                <SolarChart
+                  data={chartWind}
+                  useMockData={usingSimulatedDashboard && chartWind.length === 0}
+                />
               </div>
             </div>
 
-            {/* CME Map */}
             <div className="lg:col-span-2">
-              {/* Force direct use of simulator data if cmeEvents is empty */}
               <ClientOnly>
                 <CMEMap
                   events={
-                    cmeEvents && cmeEvents.length > 0
-                      ? cmeEvents
-                      : adityaL1Simulator.cmeEvents
+                    usingSimulatedDashboard && cmeEvents.length === 0
+                      ? adityaL1Simulator.cmeEvents
+                      : cmeEvents
                   }
                 />
               </ClientOnly>
-              {cmeEvents && cmeEvents.length === 0 && (
+              {usingSimulatedDashboard && cmeEvents.length > 0 && (
                 <div className="mt-2 text-xs text-amber-400">
-                  Using simulator fallback data for visualization
+                  CME list uses simulated events; map may include synthetic
+                  coordinates.
                 </div>
               )}
             </div>
           </div>
         </div>
 
-        {/* Data Analysis & Insights */}
         <div className="mb-8">
           <div className="flex items-center space-x-3 mb-6">
             <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-pink-600 rounded-lg flex items-center justify-center">
@@ -420,7 +512,6 @@ export default function Dashboard() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Solar Wind Chart */}
             <div>
               <div className="bg-gradient-to-br from-slate-800/40 to-slate-900/40 backdrop-blur-md border border-slate-600/30 rounded-xl p-6 shadow-xl">
                 <div className="flex items-center space-x-3 mb-4">
@@ -429,11 +520,13 @@ export default function Dashboard() {
                     Solar Wind Analysis
                   </h3>
                 </div>
-                <SolarWindChart data={liveData?.solarWind || []} />
+                <SolarWindChart
+                  data={chartWind}
+                  useMockData={usingSimulatedDashboard && chartWind.length === 0}
+                />
               </div>
             </div>
 
-            {/* Magnetometer Chart */}
             <div>
               <div className="bg-gradient-to-br from-slate-800/40 to-slate-900/40 backdrop-blur-md border border-slate-600/30 rounded-xl p-6 shadow-xl">
                 <div className="flex items-center space-x-3 mb-4">
@@ -442,13 +535,15 @@ export default function Dashboard() {
                     Magnetometer Data
                   </h3>
                 </div>
-                <MagnetometerChart data={liveData?.magnetometer || []} />
+                <MagnetometerChart
+                  data={chartMag}
+                  useMockData={usingSimulatedDashboard && chartMag.length === 0}
+                />
               </div>
             </div>
           </div>
         </div>
 
-        {/* Real-time Monitoring */}
         <div className="mb-8">
           <div className="flex items-center space-x-3 mb-6">
             <div className="w-8 h-8 bg-gradient-to-r from-green-500 to-emerald-600 rounded-lg flex items-center justify-center">
@@ -460,7 +555,6 @@ export default function Dashboard() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-            {/* Current Alerts */}
             <div className="lg:col-span-3">
               <div className="bg-gradient-to-br from-slate-800/40 to-slate-900/40 backdrop-blur-md border border-slate-600/30 rounded-xl p-6 shadow-xl">
                 <div className="flex items-center space-x-3 mb-4">
@@ -476,7 +570,7 @@ export default function Dashboard() {
                 {anomalies.length > 0 ? (
                   <div className="space-y-3">
                     {anomalies.map((anomaly, index) => (
-                      <AlertCard key={index} alert={anomaly} />
+                      <AlertCard key={anomaly.id || index} alert={anomaly} />
                     ))}
                   </div>
                 ) : (
@@ -489,7 +583,6 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Quick Actions */}
             <div className="lg:col-span-1">
               <div className="bg-gradient-to-br from-slate-800/40 to-slate-900/40 backdrop-blur-md border border-slate-600/30 rounded-xl p-6 shadow-xl">
                 <div className="flex items-center space-x-3 mb-4">
@@ -518,7 +611,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Aditya-L1 Real-Time Monitor */}
         <div className="mb-8">
           <AdityaL1Monitor
             data={liveData}
@@ -527,7 +619,6 @@ export default function Dashboard() {
           />
         </div>
 
-        {/* CME Events Table */}
         <div className="mb-8">
           <div className="flex items-center space-x-3 mb-6">
             <div className="w-8 h-8 bg-gradient-to-r from-red-500 to-pink-600 rounded-lg flex items-center justify-center">
@@ -548,37 +639,37 @@ export default function Dashboard() {
                   setCmeLoading(true);
                   setCmeError(null);
                   try {
-                    // Try test API first, then fallback to simulator
-                    const response = await fetch("/api/test-cme", {
-                      cache: "no-store", // Ensure we get fresh data
+                    const response = await fetch("/api/cme", {
+                      cache: "no-store",
+                      signal: AbortSignal.timeout(25000),
                     });
-                    if (response.ok) {
-                      const data = await response.json();
-                      if (data.success && Array.isArray(data.events)) {
-                        console.log("Test API returned events:", data.events);
-                        setCmeEvents(data.events);
-                        setCmeError(null);
-                      } else {
-                        // Fallback to simulator data
-                        console.log("Test API failed, using simulator data");
-                        setCmeEvents(adityaL1Simulator.cmeEvents);
-                        setCmeError("Using simulator data - API unavailable");
-                      }
-                    } else {
-                      // Fallback to simulator data if API call fails
-                      console.log("Test API call failed, using simulator data");
+                    const data = await response.json();
+                    if (response.ok && data.isFallback !== true) {
+                      setCmeEvents(Array.isArray(data.events) ? data.events : []);
+                      setCmeError(null);
+                    } else if (usingSimulatedDashboard) {
                       setCmeEvents(adityaL1Simulator.cmeEvents);
                       setCmeError(
-                        `API error: ${response.status} - Using simulator data`
+                        data.note ||
+                          "CME API unavailable — using simulated CME list"
+                      );
+                    } else {
+                      setCmeEvents([]);
+                      setCmeError(
+                        data.note ||
+                          "Could not refresh CME data from NASA DONKI."
                       );
                     }
                   } catch (error) {
                     console.error("Error refreshing CME data:", error);
-                    setCmeError(
-                      `Error: ${error.message} - Using simulator data`
-                    );
-                    // Fallback to simulator data
-                    setCmeEvents(adityaL1Simulator.cmeEvents);
+                    if (usingSimulatedDashboard) {
+                      setCmeEvents(adityaL1Simulator.cmeEvents);
+                      setCmeError(
+                        `${error.message} — using simulated CME list`
+                      );
+                    } else {
+                      setCmeError(`Refresh failed: ${error.message}`);
+                    }
                   } finally {
                     setCmeLoading(false);
                   }
@@ -588,10 +679,9 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* System Status Footer */}
         <div className="bg-gradient-to-br from-slate-800/40 to-slate-900/40 backdrop-blur-md border border-slate-600/30 rounded-xl p-6 shadow-xl">
           <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-4 flex-wrap gap-2">
               <div className="flex items-center space-x-2">
                 <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse"></div>
                 <span className="text-sm text-slate-300">System Status:</span>
@@ -616,11 +706,14 @@ export default function Dashboard() {
               <div className="flex items-center space-x-2">
                 <button
                   onClick={toggleSimulation}
-                  className={`px-3 py-1 rounded-md text-sm font-medium ${
-                    isSimulating
-                      ? "bg-red-500 hover:bg-red-600"
-                      : "bg-green-500 hover:bg-green-600"
-                  } text-white transition-colors`}
+                  disabled={!usingSimulatedDashboard}
+                  className={`px-3 py-1 rounded-md text-sm font-medium text-white transition-colors ${
+                    !usingSimulatedDashboard
+                      ? "bg-slate-600 cursor-not-allowed"
+                      : isSimulating
+                        ? "bg-red-500 hover:bg-red-600"
+                        : "bg-green-500 hover:bg-green-600"
+                  }`}
                 >
                   {isSimulating ? "Stop Simulation" : "Start Simulation"}
                 </button>

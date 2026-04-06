@@ -1,3 +1,12 @@
+function defaultDateRange() {
+  const today = new Date();
+  const endDate = today.toISOString().split("T")[0];
+  const startDate = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .split("T")[0];
+  return { startDate, endDate };
+}
+
 // Generate fallback CME data when NASA API is unavailable
 function generateFallbackCMEData() {
   const now = new Date();
@@ -28,9 +37,9 @@ export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
 
-    // Defaults matching the request; allow overrides via query params
-    const startDate = searchParams.get("startDate") || "2016-09-01";
-    const endDate = searchParams.get("endDate") || "2016-09-30";
+    const { startDate: defaultStart, endDate: defaultEnd } = defaultDateRange();
+    const startDate = searchParams.get("startDate") || defaultStart;
+    const endDate = searchParams.get("endDate") || defaultEnd;
     const mostAccurateOnly = searchParams.get("mostAccurateOnly") ?? "true";
     const speed = searchParams.get("speed") || "500";
     const halfAngle = searchParams.get("halfAngle") || "30";
@@ -62,8 +71,7 @@ export async function GET(request) {
       );
     }
 
-    // Use the provided NASA API key
-    const apiKey = "Kh3ZBA6vKM64DmdJ6z5n2k0gXJ1V96nGpquWq9Uz";
+    const apiKey = process.env.NASA_API_KEY || "DEMO_KEY";
 
     // Check if we've hit the API recently to avoid rate limiting
     const cacheKey = `nasa_api_last_call_${startDate}_${endDate}`;
@@ -76,7 +84,6 @@ export async function GET(request) {
     const cachedResponse = global[responseCacheKey];
 
     if (cachedResponse && cachedResponse.expiresAt > Date.now()) {
-      console.log("Using cached NASA API response");
       return new Response(
         JSON.stringify({
           params: {
@@ -113,7 +120,6 @@ export async function GET(request) {
     url.searchParams.set("api_key", apiKey);
 
     try {
-      console.log("Calling NASA DONKI API with custom key");
       const response = await fetch(url, {
         method: "GET",
         headers: {
@@ -126,7 +132,6 @@ export async function GET(request) {
       }
 
       const data = await response.json();
-      console.log("NASA API response received:", data);
 
       // Update cache
       global[cacheKey] = now;

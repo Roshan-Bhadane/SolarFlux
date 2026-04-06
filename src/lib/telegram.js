@@ -17,12 +17,11 @@ export async function sendTelegramAlert(
     const chat = chatId || process.env.TELEGRAM_CHAT_ID;
 
     if (!token || !chat) {
-      console.warn("Telegram credentials not configured. Skipping alert.");
       return {
         success: false,
         error: "Telegram credentials not configured",
         message:
-          "Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID environment variables",
+          "Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env.local to enable alerts",
       };
     }
 
@@ -45,7 +44,6 @@ export async function sendTelegramAlert(
     const result = await response.json();
 
     if (result.ok) {
-      console.log("Telegram alert sent successfully");
       return {
         success: true,
         message_id: result.result.message_id,

@@ -12,34 +12,47 @@ import {
   AreaChart,
 } from "recharts";
 
-export default function SolarWindChart({ data }) {
-  // Transform data for the chart
+export default function SolarWindChart({ data, useMockData = false }) {
   const chartData =
-    data?.map((item, index) => ({
+    data?.map((item) => ({
       time: (() => {
         const date = new Date(item.timestamp);
-        const hours = date.getHours().toString().padStart(2, '0');
-        const minutes = date.getMinutes().toString().padStart(2, '0');
+        const hours = date.getHours().toString().padStart(2, "0");
+        const minutes = date.getMinutes().toString().padStart(2, "0");
         return `${hours}:${minutes}`;
       })(),
       windSpeed: item.windSpeed,
       density: item.density,
-      temperature: item.temperature / 1000, // Convert to thousands for better display
+      temperature:
+        item.temperature != null &&
+        !Number.isNaN(Number(item.temperature))
+          ? Number(item.temperature) / 1000
+          : 0,
       magneticField: item.magneticField,
     })) || [];
 
-  // Generate sample data if no real data
-  if (chartData.length === 0) {
+  if (chartData.length === 0 && useMockData) {
     for (let i = 23; i >= 0; i--) {
       const time = new Date(Date.now() - i * 60 * 60 * 1000);
       chartData.push({
-        time: `${time.getHours().toString().padStart(2, '0')}:${time.getMinutes().toString().padStart(2, '0')}`,
+        time: `${time.getHours().toString().padStart(2, "0")}:${time
+          .getMinutes()
+          .toString()
+          .padStart(2, "0")}`,
         windSpeed: 400 + Math.random() * 200,
         density: 5 + Math.random() * 10,
         temperature: (100 + Math.random() * 200) / 1000,
         magneticField: 5 + Math.random() * 15,
       });
     }
+  }
+
+  if (chartData.length === 0) {
+    return (
+      <div className="w-full h-80 flex items-center justify-center text-slate-400 text-sm border border-slate-600/30 rounded-lg bg-slate-900/30">
+        No solar wind data to display
+      </div>
+    );
   }
 
   const CustomTooltip = ({ active, payload, label }) => {

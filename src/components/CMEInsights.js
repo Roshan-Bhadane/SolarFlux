@@ -5,61 +5,19 @@ import {
   classifyStrength,
   estimateDirection,
   forecastImpact,
-  detectAnomalies,
 } from "@/lib/cme/placeholders";
-import { sendCMEAlert } from "@/lib/telegram";
 
 export default function CMEInsights({ events = [] }) {
-  const [anomalies, setAnomalies] = useState([]);
-  const [alerts, setAlerts] = useState([]);
+  const [telegramConfigured, setTelegramConfigured] = useState(null);
+  const [sending, setSending] = useState(false);
+  const [sendMessage, setSendMessage] = useState(null);
 
-  // Process events for anomalies
   useEffect(() => {
-    if (events && events.length > 0) {
-      // Convert events to ASPEX format for anomaly detection
-      const aspexData = events.map((event) => ({
-        timestamp: event.startTime,
-        windSpeed: event.speed || event.speedKmSec,
-        particleFlux: event.particleFlux || 0,
-        ...event,
-      }));
-
-      const anomalyResult = detectAnomalies(aspexData);
-      setAnomalies(anomalyResult.anomalies || []);
-
-      // Generate alerts for rule-based anomalies
-      const newAlerts = [];
-      anomalyResult.anomalies?.forEach(async (anomaly) => {
-        if (anomaly.isRuleBased) {
-          const forecast = forecastImpact(anomaly);
-          const alert = {
-            id: `alert-${Date.now()}-${Math.random()}`,
-            reason: anomaly.reason,
-            etaHours: forecast.etaHours,
-            timestamp: anomaly.timestamp,
-            severity: "high",
-          };
-          newAlerts.push(alert);
-
-          // Send Telegram alert for rule-based anomalies
-          try {
-            const telegramResult = await sendCMEAlert(anomaly, forecast);
-            if (telegramResult.success) {
-              console.log("Telegram alert sent for anomaly:", anomaly.reason);
-            } else {
-              console.warn(
-                "Failed to send Telegram alert:",
-                telegramResult.error
-              );
-            }
-          } catch (error) {
-            console.error("Error sending Telegram alert:", error);
-          }
-        }
-      });
-      setAlerts(newAlerts);
-    }
-  }, [events]);
+    fetch("/api/telegram-status")
+      .then((r) => r.json())
+      .then((d) => setTelegramConfigured(!!d.configured))
+      .catch(() => setTelegramConfigured(false));
+  }, []);
 
   const sample = events[0];
   if (!sample) {
@@ -75,41 +33,116 @@ export default function CMEInsights({ events = [] }) {
   const direction = estimateDirection(sample);
   const forecast = forecastImpact(sample);
 
+  const sendTelegramTest = async () => {
+    setSendMessage(null);
+    if (!telegramConfigured) {
+      setSendMessage(
+        "Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env.local to enable alerts."
+      );
+      return;
+    }
+    setSending(true);
+    try {
+      const res = await fetch("/api/telegram-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSendMessage("Test message sent. Check your Telegram chat.");
+      } else {
+        setSendMessage(
+          data.message ||
+            data.details?.error ||
+            "Could not send Telegram message."
+        );
+      }
+    } catch (e) {
+      setSendMessage(e.message || "Request failed.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const sendSampleCmeAlert = async () => {
+    setSendMessage(null);
+    if (!telegramConfigured) {
+      setSendMessage(
+        "Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env.local to enable alerts."
+      );
+      return;
+    }
+    setSending(true);
+    try {
+      const anomaly = {
+        reason: `CME sample alert (${strength.class})`,
+        timestamp: sample.startTime || sample.time21_5 || new Date().toISOString(),
+        windSpeed: parseFloat(sample.speed ?? sample.speedKmSec) || undefined,
+        particleFlux: 0,
+      };
+      const res = await fetch("/api/telegram-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "cme-alert",
+          anomaly,
+          forecast,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSendMessage("CME-style alert sent to Telegram.");
+      } else {
+        setSendMessage(
+          data.message ||
+            data.details?.error ||
+            "Could not send Telegram message."
+        );
+      }
+    } catch (e) {
+      setSendMessage(e.message || "Request failed.");
+    } finally {
+      setSending(false);
+    }
+  };
+
   return (
     <div className="bg-black/20 backdrop-blur-md border border-white/10 rounded-xl p-6">
       <h3 className="text-lg font-semibold text-white mb-4">
         CME Insights & Alerts
       </h3>
 
-      {/* Alert Section */}
-      {alerts.length > 0 && (
-        <div className="mb-6">
-          <h4 className="text-md font-semibold text-white mb-3">
-            🚨 Active Alerts
-          </h4>
-          {alerts.map((alert, index) => (
-            <div
-              key={alert.id}
-              className="mb-3 p-4 bg-red-500/20 border border-red-500/30 rounded-lg"
-            >
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-2xl">🚨</span>
-                <span className="text-red-300 font-semibold">
-                  CME Detected!
-                </span>
-              </div>
-              <div className="text-red-200 text-sm mb-1">
-                <strong>Reason:</strong> {alert.reason}
-              </div>
-              <div className="text-red-200 text-sm">
-                <strong>ETA:</strong> {alert.etaHours} hours
-              </div>
-            </div>
-          ))}
-        </div>
+      {telegramConfigured === false && (
+        <p className="text-amber-200/90 text-sm mb-4">
+          Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env.local to enable
+          alerts.
+        </p>
       )}
 
-      {/* Insights Grid */}
+      <div className="flex flex-wrap gap-2 mb-6">
+        <button
+          type="button"
+          onClick={sendTelegramTest}
+          disabled={sending}
+          className="px-3 py-2 rounded-lg text-sm font-medium bg-blue-600/80 hover:bg-blue-600 text-white disabled:opacity-50"
+        >
+          {sending ? "Sending…" : "Send Telegram test"}
+        </button>
+        <button
+          type="button"
+          onClick={sendSampleCmeAlert}
+          disabled={sending}
+          className="px-3 py-2 rounded-lg text-sm font-medium bg-orange-600/80 hover:bg-orange-600 text-white disabled:opacity-50"
+        >
+          {sending ? "Sending…" : "Send sample CME alert"}
+        </button>
+      </div>
+
+      {sendMessage && (
+        <p className="text-sm text-gray-300 mb-4">{sendMessage}</p>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
         <div className="p-3 bg-white/5 rounded">
           <div className="text-gray-400">Strength</div>
@@ -139,18 +172,6 @@ export default function CMEInsights({ events = [] }) {
           </div>
         </div>
       </div>
-
-      {/* Anomaly Summary */}
-      {anomalies.length > 0 && (
-        <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded">
-          <div className="text-yellow-300 text-sm">
-            <strong>Anomalies Detected:</strong> {anomalies.length}
-            {anomalies.some((a) => a.isRuleBased) && (
-              <span className="ml-2 text-red-300">(Including Rule-Based)</span>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

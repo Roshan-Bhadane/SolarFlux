@@ -44,7 +44,6 @@ function getLatitude(event) {
       return match[1] === "N" ? value : -value;
     }
   }
-  console.log("Event missing latitude:", event);
   return "—";
 }
 
@@ -68,32 +67,20 @@ const TOPO_JSON =
   "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
 
 export default function CMEMap({ events = [] }) {
-  console.log("CMEMap received events:", events);
-
-  // Force array if events is undefined or null
-  const safeEvents = Array.isArray(events) ? events : [];
-
   const markers = useMemo(() => {
-    console.log("CME events received:", safeEvents);
+    const safeEvents = Array.isArray(events) ? events : [];
     if (safeEvents.length === 0) {
-      console.log("No CME events to process");
       return [];
     }
 
     const filteredMarkers = safeEvents
       .filter((e) => {
         if (!e) {
-          console.log("Skipping null/undefined event");
           return false;
         }
-        // Get latitude and longitude using the same helper functions as CMETable
         const lat = getLatitude(e);
         const lon = getLongitude(e);
-        const valid = lat !== "—" && lon !== "—";
-        if (!valid) {
-          console.log("Skipping event with invalid coordinates:", e);
-        }
-        return valid;
+        return lat !== "—" && lon !== "—";
       })
       .map((e, idx) => {
         const marker = {
@@ -110,12 +97,10 @@ export default function CMEMap({ events = [] }) {
           earthImpact: e.earthImpact || false,
           classification: e.classification || "",
         };
-        console.log("Created marker:", marker);
         return marker;
       });
-    console.log("Filtered markers with prediction areas:", filteredMarkers);
     return filteredMarkers;
-  }, [safeEvents]);
+  }, [events]);
 
   return (
     <div className="bg-gradient-to-br from-slate-800/40 to-slate-900/40 backdrop-blur-md border border-slate-600/30 rounded-xl p-6 shadow-xl">
@@ -211,7 +196,6 @@ export default function CMEMap({ events = [] }) {
 
           {/* CME Prediction Areas */}
           {markers.map((m) => {
-            console.log("Processing marker for prediction area:", m);
             // Create a proper cone shape for prediction area
             const centerX = m.coordinates[0];
             const centerY = m.coordinates[1];
@@ -246,19 +230,6 @@ export default function CMEMap({ events = [] }) {
               L ${basePoint2X} ${basePoint2Y}
               Z
             `;
-
-            console.log("Generated cone path:", {
-              centerX,
-              centerY,
-              halfAngle,
-              direction,
-              tipX,
-              tipY,
-              basePoint1X,
-              basePoint1Y,
-              basePoint2X,
-              basePoint2Y,
-            });
 
             // Draw the prediction cone only if we have valid coordinates and half angle
             return (

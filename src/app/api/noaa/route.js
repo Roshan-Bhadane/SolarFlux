@@ -16,7 +16,6 @@ export async function GET(request) {
         headers: { "Content-Type": "application/json" },
       });
     } catch (error) {
-      console.warn("NOAA API failed, using mock data:", error.message);
       return generateNOAAMockData();
     }
   } catch (error) {
@@ -56,8 +55,8 @@ async function fetchNOAAData() {
         const data = await response.json();
         results[endpoint.split("/").pop()] = data;
       }
-    } catch (error) {
-      console.warn(`Failed to fetch ${endpoint}:`, error.message);
+    } catch {
+      /* skip failed endpoint */
     }
   }
 

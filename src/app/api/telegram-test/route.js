@@ -1,4 +1,8 @@
-import { testTelegramConnection, sendDailySummary } from "@/lib/telegram";
+import {
+  testTelegramConnection,
+  sendDailySummary,
+  sendCMEAlert,
+} from "@/lib/telegram";
 
 export async function GET() {
   try {
@@ -9,12 +13,12 @@ export async function GET() {
         success: result.success,
         message: result.success
           ? "Telegram test message sent successfully"
-          : "Failed to send Telegram test message",
+          : result.error || "Failed to send Telegram test message",
         details: result,
         timestamp: new Date().toISOString(),
       }),
       {
-        status: result.success ? 200 : 500,
+        status: 200,
         headers: { "Content-Type": "application/json" },
       }
     );
@@ -28,7 +32,7 @@ export async function GET() {
         timestamp: new Date().toISOString(),
       }),
       {
-        status: 500,
+        status: 200,
         headers: { "Content-Type": "application/json" },
       }
     );
@@ -37,12 +41,14 @@ export async function GET() {
 
 export async function POST(request) {
   try {
-    const body = await request.json();
-    const { type, anomalies = [], events = [] } = body;
+    const body = await request.json().catch(() => ({}));
+    const { type, anomalies = [], events = [], anomaly, forecast } = body;
 
     let result;
     if (type === "daily-summary") {
       result = await sendDailySummary(anomalies, events);
+    } else if (type === "cme-alert" && anomaly && forecast) {
+      result = await sendCMEAlert(anomaly, forecast);
     } else {
       result = await testTelegramConnection();
     }
@@ -52,14 +58,18 @@ export async function POST(request) {
         success: result.success,
         message: result.success
           ? `${
-              type === "daily-summary" ? "Daily summary" : "Test message"
+              type === "daily-summary"
+                ? "Daily summary"
+                : type === "cme-alert"
+                  ? "CME alert"
+                  : "Test message"
             } sent successfully`
-          : "Failed to send message",
+          : result.error || "Failed to send message",
         details: result,
         timestamp: new Date().toISOString(),
       }),
       {
-        status: result.success ? 200 : 500,
+        status: 200,
         headers: { "Content-Type": "application/json" },
       }
     );
@@ -73,7 +83,7 @@ export async function POST(request) {
         timestamp: new Date().toISOString(),
       }),
       {
-        status: 500,
+        status: 200,
         headers: { "Content-Type": "application/json" },
       }
     );

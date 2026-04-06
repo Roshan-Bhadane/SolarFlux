@@ -10,7 +10,7 @@
  * @returns {string} The NASA API key
  */
 export function getNasaApiKey() {
-  return process.env.NASA_API_KEY;
+  return process.env.NASA_API_KEY || "DEMO_KEY";
 }
 
 /**
@@ -21,11 +21,7 @@ export function getNasaApiKey() {
  */
 export async function fetchDonkiData(endpoint, params = {}) {
   const apiKey = getNasaApiKey();
-  
-  if (!apiKey) {
-    throw new Error('NASA API key is not configured');
-  }
-  
+
   const queryParams = new URLSearchParams({
     ...params,
     api_key: apiKey

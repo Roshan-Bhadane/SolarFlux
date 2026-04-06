@@ -67,11 +67,6 @@ export default function CMETable({
   const isFallbackData =
     error && (error.includes("fallback") || error.includes("Fallback"));
 
-  // Debug logging
-  console.log("CMETable received props:", { cmeEvents, loading, error });
-  console.log("CMETable processed events:", events);
-  console.log("Events length:", events.length);
-
   return (
     <div className="bg-black/20 backdrop-blur-md border border-white/10 rounded-xl p-6">
       <div className="flex items-center justify-between mb-4">
@@ -124,7 +119,6 @@ export default function CMETable({
                     </div>
                     <button
                       onClick={() => {
-                        console.log("Manual refresh triggered");
                         if (onRefresh) onRefresh();
                       }}
                       className="px-3 py-1 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 text-xs rounded border border-blue-500/30"

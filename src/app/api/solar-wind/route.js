@@ -1,17 +1,18 @@
 import {
   parseSWPCData,
+  parseAceMagnetometerMap,
+  mergeMagIntoPlasma,
   getLatestReadings,
   calculateAverages,
 } from "@/lib/swpc/parser";
 
-// SWPC Solar Wind Data API
-// Fetches real-time data from SWPC servers
-
+// SWPC text products (legacy /products/solar-wind/*.txt URLs often 404 now)
 const SWPC_URLS = {
-  ace: "https://services.swpc.noaa.gov/products/solar-wind/ace-rt-swepam.txt",
-  dscovr:
-    "https://services.swpc.noaa.gov/products/solar-wind/dscovr-rt-swepam.txt",
+  ace: "https://services.swpc.noaa.gov/text/ace-swepam.txt",
+  dscovr: "https://services.swpc.noaa.gov/text/ace-swepam.txt",
 };
+
+const ACE_MAG_URL = "https://services.swpc.noaa.gov/text/ace-magnetometer.txt";
 
 // Fallback data for when SWPC is unavailable
 function generateFallbackData() {
@@ -90,18 +91,21 @@ export async function GET(request) {
       dataSource = `${source}_FALLBACK`;
     } else {
       try {
-        // Try to fetch real data
-        const rawData = await fetchSWPCData(url);
-        parsedData = parseSWPCData(rawData);
+        const [rawPlasma, rawMag] = await Promise.all([
+          fetchSWPCData(url),
+          fetchSWPCData(ACE_MAG_URL).catch(() => null),
+        ]);
+        parsedData = parseSWPCData(rawPlasma);
+        if (rawMag && parsedData.length > 0) {
+          const magMap = parseAceMagnetometerMap(rawMag);
+          parsedData = mergeMagIntoPlasma(parsedData, magMap);
+        }
 
-        // If parsing failed or no data, use fallback
         if (!parsedData || parsedData.length === 0) {
-          console.warn("No valid data parsed from SWPC, using fallback");
           parsedData = generateFallbackData();
           dataSource = `${source}_FALLBACK`;
         }
-      } catch (error) {
-        console.warn("SWPC fetch failed, using fallback data:", error.message);
+      } catch {
         parsedData = generateFallbackData();
         dataSource = `${source}_FALLBACK`;
       }
